@@ -14,7 +14,7 @@ NAVER_CLIENT_SECRET = "DzhNvk3yi3"
 RAPID_KEY = "3846404552mshd40a37048efd7cep108802jsn513f62eb92a3"
 RAPID_HOST = "naver-shopping-insights-api-unofficial.p.rapidapi.com"
 
-st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V190")
+st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V191")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
@@ -24,43 +24,38 @@ def get_db():
     conn.commit()
     return conn
 
-# --- [자동 지능형 추격 엔진] ---
-def run_auto_scan_v190(skw, spmid, scmid, snote, user_id):
+# --- [정밀 추격 엔진] ---
+def run_auto_scan_v191(skw, spmid, scmid, snote, user_id):
     t_pmid, t_cmid = str(spmid).strip(), str(scmid).strip()
     db = get_db()
     
-    # 1. 기존 금고 데이터 및 로그에서 가장 좋았던 시절의 데이터 찾기
+    # 금고 및 로그 데이터 로드
     meta = db.execute("SELECT name, img, reviews, purchase FROM product_meta WHERE p_mid=?", (t_pmid,)).fetchone()
-    # 로그 전체를 뒤져서 가장 긴 이름을 찾음 (사장님이 수동으로 고칠 필요 없게!)
-    log_best_name = db.execute("SELECT name FROM logs WHERE p_mid=? ORDER BY length(name) DESC LIMIT 1", (t_pmid,)).fetchone()
+    log_best = db.execute("SELECT name FROM logs WHERE p_mid=? ORDER BY length(name) DESC LIMIT 1", (t_pmid,)).fetchone()
     
-    m_name = (log_best_name[0].split("||")[2] if log_best_name and "||" in log_best_name[0] else meta[0]) if meta else skw
-    m_img = meta[1] if meta else ""
-    m_rev = meta[2] if meta else "0"
-    m_pur = meta[3] if meta else "0"
+    m_name = (log_best[0].split("||")[2] if log_best and "||" in log_best[0] else meta[0]) if meta else skw
+    m_img, m_rev, m_pur = (meta[1], meta[2], meta[3]) if meta else ("", "0", "0")
 
-    with st.spinner(f"🤖 '{skw}' 지능형 자동 추격 중..."):
-        # 공식 API 스캔 (순위 확인용)
-        url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(skw)}&display=100"
-        headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
+    with st.spinner(f"🤖 '{skw}' 데이터 사수 중..."):
+        # 공식 API
         f_rank, off_name, off_img = 0, skw, ""
         try:
+            url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(skw)}&display=100"
+            headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 items = res.json().get('items', [])
                 for idx, item in enumerate(items):
                     if str(item.get('productId')) in [t_pmid, t_cmid]:
-                        f_rank = idx + 1
-                        off_name = re.sub('<[^>]*>', '', item.get('title', ''))
-                        off_img = item.get('image', '')
+                        f_rank, off_name, off_img = idx + 1, re.sub('<[^>]*>', '', item.get('title', '')), item.get('image', '')
                         break
         except: pass
 
-        # RapidAPI 정찰 (상세 정보 확인용)
-        r_url = f"https://{RAPID_HOST}/v1/naver/products?url={quote(f'https://msearch.shopping.naver.com/catalog/{t_cmid}')}"
-        r_headers = {"X-RapidAPI-Key": RAPID_KEY, "X-RapidAPI-Host": RAPID_HOST}
+        # RapidAPI
         spy = None
         try:
+            r_url = f"https://{RAPID_HOST}/v1/naver/products?url={quote(f'https://msearch.shopping.naver.com/catalog/{t_cmid}')}"
+            r_headers = {"X-RapidAPI-Key": RAPID_KEY, "X-RapidAPI-Host": RAPID_HOST}
             r_res = requests.get(r_url, headers=r_headers, timeout=15)
             if r_res.status_code == 200:
                 data = r_res.json()
@@ -71,45 +66,31 @@ def run_auto_scan_v190(skw, spmid, scmid, snote, user_id):
                         break
         except: pass
 
-    # --- [지능형 데이터 판단 (핵심!)] ---
-    # 이름: (금고이름, 정찰이름, 공식이름) 중 무조건 가장 긴 녀석 선택
-    candidates = [m_name, off_name]
-    if spy: candidates.append(spy['name'])
-    final_name = max([c for c in candidates if c], key=len)
-
-    # 이미지: 한 번이라도 확보했으면 유지
+    # 지능형 판단
+    final_name = max([m_name, off_name, (spy['name'] if spy else "")], key=len)
     final_img = m_img if (m_img and m_img.startswith("http")) else (spy['img'] if spy and spy['img'] else off_img)
+    final_pur, final_rev, final_inner = (str(spy['pur']), str(spy['rev']), spy['inner']) if spy and int(spy['pur']) > 0 else (m_pur, m_rev, 0)
 
-    # 수치: 0이면 차단으로 간주하고 기존 데이터 유지
-    if spy and int(spy['pur']) > 0:
-        final_pur, final_rev, final_inner = str(spy['pur']), str(spy['rev']), spy['inner']
-    else:
-        final_pur, final_rev, final_inner = m_pur, m_rev, 0
-
-    # 금고 업데이트
     db.execute("INSERT OR REPLACE INTO product_meta VALUES (?,?,?,?,?)", (t_pmid, final_name, final_img, final_rev, final_pur))
-    
-    # 로그 저장
     rank_save = f"{f_rank}|{final_inner}"
     save_data = f"{final_img}||0||{final_name}||{final_name}"
     db.execute("INSERT INTO logs (user_id, date, keyword, p_mid, rank, name, price, mall, reviews, purchase, cat_mid, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (user_id, datetime.now().strftime("%Y-%m-%d %H:%M"), skw, t_pmid, rank_save, save_data, "0", "피크스페이스", final_rev, final_pur, t_cmid, str(snote)))
-    db.commit(); db.close()
-    st.rerun()
+    db.commit(); db.close(); st.rerun()
 
-# --- [UI 렌더링 영역] ---
+# --- [UI 렌더링] ---
 st.markdown("""<style>
     .product-box { border: 2px solid #edf2f7; border-radius: 15px; padding: 25px; background: white; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
     .product-title { font-size: 1.15rem; font-weight: 700; color: #1a202c; line-height: 1.4; margin-bottom: 8px; }
 </style>""", unsafe_allow_html=True)
 
-st.title("🚀 JOA CLOUD SNIPER V190 (완전 자동화)")
+st.title("🚀 JOA CLOUD SNIPER V191")
 
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1.2])
     nk, np, nc, nn = c1.text_input("키워드"), c2.text_input("P-MID"), c3.text_input("C-MID"), c4.text_input("메모")
-    if c5.button("🚀 추격 시작", use_container_width=True):
-        if nk and np: run_auto_scan_v190(nk, np, nc, nn, "사장님")
+    if c5.button("🚀 새 추격 시작", key="main_btn"):
+        if nk and np: run_auto_scan_v191(nk, np, nc, nn, "사장님")
 
 st.divider()
 
@@ -119,11 +100,10 @@ items = db.execute("SELECT keyword, p_mid, note, MIN(id) FROM logs GROUP BY keyw
 for idx, (kw, mid, m_val, _) in enumerate(items):
     meta = db.execute("SELECT name, img, reviews, purchase FROM product_meta WHERE p_mid=?", (mid,)).fetchone()
     row = db.execute("SELECT * FROM logs WHERE keyword=? AND p_mid=? ORDER BY id DESC LIMIT 1", (kw, mid)).fetchone()
-    
     if not row or not meta: continue
     
     m_name, m_img, m_rev, m_pur = meta
-    m_rk, _ = str(row[5]).split("|") if "|" in str(row[5]) else (row[5], "0")
+    m_rk = str(row[5]).split("|")[0] if "|" in str(row[5]) else row[5]
 
     with st.container():
         st.markdown('<div class="product-box">', unsafe_allow_html=True)
@@ -149,7 +129,8 @@ for idx, (kw, mid, m_val, _) in enumerate(items):
             st.markdown(f"<div style='margin-top:10px;'>구매 <b>{m_pur}</b><br>리뷰 <b>{m_rev}</b></div>", unsafe_allow_html=True)
         with col6:
             st.markdown(f"<div style='text-align:center;'><h1 style='font-size:3.5rem; margin:0;'>{m_rk if m_rk != '0' else '100+'}위</h1></div>", unsafe_allow_html=True)
-            if st.button("🔄 즉시 업데이트", key=f"btn_{mid}"):
-                run_auto_scan_v190(kw, mid, row[11], m_val, "사장님")
+            # [중요] key에 idx를 추가하여 중복 키 에러를 방지합니다.
+            if st.button("🔄 즉시 업데이트", key=f"btn_{mid}_{idx}"):
+                run_auto_scan_v191(kw, mid, row[11], m_val, "사장님")
         st.markdown('</div>', unsafe_allow_html=True)
 db.close()
