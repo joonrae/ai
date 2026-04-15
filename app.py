@@ -7,20 +7,19 @@ import os
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-# [1] 클라우드 환경 설정 (파일명만 적으면 루트 경로에서 찾습니다)
+# [1] 클라우드 환경 설정
 DB_PATH = 'joa_final_v12.db'
 
 # ==========================================
-# VERSION: V182-CLOUD-FULL (클라우드 완전 통합판)
+# VERSION: V183-CLOUD-FIX (UI 기둥 수선 완료)
 # ==========================================
 
 NAVER_CLIENT_ID = "alIoLSc1k8jVcgeZZ8Ab"
 NAVER_CLIENT_SECRET = "DzhNvk3yi3"
 
-st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V182")
+st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V183")
 
 def get_db():
-    # 클라우드에서는 파일 읽기/쓰기가 더 유연합니다.
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)")
@@ -55,12 +54,8 @@ if not st.session_state.auth:
                     st.error("아이디/비번을 확인하세요. (DB 파일이 잘 올라갔는지 확인!)")
     st.stop()
 
-# ==========================================
-# [로그인 후 대시보드 영역]
-# ==========================================
-
-# --- [기능] 공식 API 추격 ---
-def run_scan_v182(skw, spmid, scmid, snote, user_id):
+# --- [기능] 클라우드 정찰 엔진 ---
+def run_scan_v183(skw, spmid, scmid, snote, user_id):
     t_pmid, t_cmid = str(spmid).strip(), str(scmid).strip()
     url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(skw)}&display=100"
     headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
@@ -79,7 +74,6 @@ def run_scan_v182(skw, spmid, scmid, snote, user_id):
             
             db = get_db()
             rank_save = f"{f_rank}|0"
-            # 클라우드에서는 이미지와 상세 정보도 추후 보강 예정 (일단 순위 우선)
             save_data = f"||0||{off_name}||{off_name}"
             db.execute("INSERT INTO logs (user_id, date, keyword, p_mid, rank, name, price, mall, reviews, purchase, cat_mid, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (user_id, datetime.now().strftime("%Y-%m-%d %H:%M"), skw, t_pmid, rank_save, save_data, "0", "피크스페이스", "0", "0", t_cmid, str(snote)))
@@ -102,16 +96,14 @@ st.markdown("""<style>
 
 st.title(f"🚀 JOA CLOUD SNIPER - {st.session_state.user}님")
 
-# 상단 입력창
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1.2])
     nk, np, nc, nn = c1.text_input("키워드"), c2.text_input("P-MID"), c3.text_input("C-MID"), c4.text_input("메모")
     if c5.button("🚀 순위 추격", use_container_width=True):
-        if nk and np: run_scan_v182(nk, np, nc, nn, st.session_state.user)
+        if nk and np: run_scan_v183(nk, np, nc, nn, st.session_state.user)
 
 st.divider()
 
-# 리스트 출력
 db = get_db()
 items = db.execute("SELECT keyword, p_mid, note, MIN(id) FROM logs WHERE user_id=? GROUP BY keyword, p_mid, note ORDER BY MIN(id) ASC", (st.session_state.user,)).fetchall()
 
@@ -124,7 +116,8 @@ for idx, (kw, mid, m_val, _) in enumerate(items):
 
     with st.container():
         st.markdown('<div class="product-box">', unsafe_allow_html=True)
-        col1, col2, col3, col4, col5 = st.columns([0.5, 4.2, 5.0, 1.8, 2.8])
+        # 기둥을 6개로 정확하게 정의합니다.
+        col1, col2, col3, col4, col5, col6 = st.columns([0.5, 4.2, 5.0, 1.8, 1.5, 2.5])
         with col1: st.subheader(idx + 1)
         with col2:
             st.markdown(f"### 🔍 {kw}")
@@ -132,20 +125,28 @@ for idx, (kw, mid, m_val, _) in enumerate(items):
             if memo_text and memo_text != "None": st.markdown(f"<div style='color:#3182ce;'>📝 {memo_text}</div>", unsafe_allow_html=True)
             st.caption(f"P: {mid} | C: {cmid if cmid else '-'}")
         with col3:
-            h_html = "<div style='display:flex; gap:5px;'>"
+            h_html = "<div style='display:flex; gap:3px;'>"
             for d in range(8):
                 t = (datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d")
                 hist = db.execute("SELECT rank FROM logs WHERE keyword=? AND p_mid=? AND note=? AND date LIKE ? ORDER BY id DESC LIMIT 1", (kw, mid, memo_text, f"{t}%")).fetchone()
                 m_rk, _ = get_rank_display(hist[0] if hist else "-")
-                h_html += f"<div style='flex:1; border:1px solid #e2e8f0; padding:6px; text-align:center; background:#f8f9fa; border-radius:10px;'><div style='font-size:0.65rem; color:#a0aec0;'>{t[5:]}</div><div style='font-size:0.85rem; font-weight:bold;'>{m_rk}</div></div>"
+                h_html += f"<div style='flex:1; border:1px solid #e2e8f0; padding:5px; text-align:center; background:#f8f9fa; border-radius:8px;'><div style='font-size:0.6rem; color:#a0aec0;'>{t[5:]}</div><div style='font-size:0.8rem; font-weight:bold;'>{m_rk}</div></div>"
             st.markdown(h_html + "</div>", unsafe_allow_html=True)
         with col4:
             st.markdown(f"<div style='margin-top:10px;'>구매 <b>{m_buy}</b><br>리뷰 <b>{m_rev}</b></div>", unsafe_allow_html=True)
+        with col5:
+            # 🔄 버튼 영역
+            if st.button("🔄", key=f"r_{row[0]}"): 
+                run_scan_v183(kw, mid, cmid, memo_text, st.session_state.user)
         with col6:
+            # 순위 표시 및 🗑️ 버튼 영역
             m_rk, _ = get_rank_display(row[5])
-            st.markdown(f"<div style='text-align:center;'><h1 style='font-size:3rem; margin:0;'>{m_rk}</h1></div>", unsafe_allow_html=True)
-            bc = st.columns(2)
-            if bc[0].button("🔄", key=f"r_{row[0]}"): run_scan_v172(kw, mid, cmid, memo_text, st.session_state.user)
-            if bc[1].button("🗑️", key=f"d_{row[0]}"): db.execute("DELETE FROM logs WHERE keyword=? AND p_mid=? AND note=? AND user_id=?", (kw, mid, memo_text, st.session_state.user)); st.rerun()
+            sc1, sc2 = st.columns([3, 1])
+            sc1.markdown(f"<h1 style='font-size:2.5rem; margin:0; text-align:right;'>{m_rk}</h1>", unsafe_allow_html=True)
+            if sc2.button("🗑️", key=f"d_{row[0]}"):
+                db_del = get_db()
+                db_del.execute("DELETE FROM logs WHERE keyword=? AND p_mid=? AND note=? AND user_id=?", (kw, mid, memo_text, st.session_state.user))
+                db_del.commit(); db_del.close()
+                st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 db.close()
