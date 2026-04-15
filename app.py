@@ -7,29 +7,38 @@ import os
 from datetime import datetime, timedelta
 from urllib.parse import quote
 
-# [1] 클라우드 환경 경로 설정 (깃허브 루트 경로)
+# [1] 클라우드 환경 설정 (파일명만 적으면 루트 경로에서 찾습니다)
 DB_PATH = 'joa_final_v12.db'
 
 # ==========================================
-# VERSION: V181-CLOUD-START (클라우드 이사 전용)
+# VERSION: V182-CLOUD-FULL (클라우드 완전 통합판)
 # ==========================================
 
 NAVER_CLIENT_ID = "alIoLSc1k8jVcgeZZ8Ab"
 NAVER_CLIENT_SECRET = "DzhNvk3yi3"
 
-st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER")
+st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V182")
 
 def get_db():
-    # 클라우드에서는 파일 권한이 더 자유롭습니다.
+    # 클라우드에서는 파일 읽기/쓰기가 더 유연합니다.
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("CREATE TABLE IF NOT EXISTS users (username TEXT PRIMARY KEY, password TEXT)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT, date TEXT, keyword TEXT, p_mid TEXT, 
+            rank TEXT, name TEXT, price TEXT, mall TEXT, 
+            reviews TEXT, purchase TEXT, cat_mid TEXT, note TEXT
+        )
+    """)
     return conn
 
 # --- [로그인 시스템] ---
 if 'auth' not in st.session_state: st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.markdown("<h1 style='text-align:center;'>☁️ JOA CLOUD SNIPER</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='text-align:center; margin-top:50px;'>☁️ JOA CLOUD SNIPER</h1>", unsafe_allow_html=True)
     _, l_col, _ = st.columns([1, 1, 1])
     with l_col:
         with st.form("login"):
@@ -38,26 +47,28 @@ if not st.session_state.auth:
             if st.form_submit_button("접속"):
                 db = get_db()
                 r = db.execute("SELECT username FROM users WHERE username=? AND password=?", (u, p)).fetchone()
+                db.close()
                 if r:
                     st.session_state.auth, st.session_state.user = True, r[0]
-                    db.close(); st.rerun()
+                    st.rerun()
                 else:
-                    st.error("계정 정보를 확인해주세요. (DB 파일이 잘 올라갔는지 확인!)")
+                    st.error("아이디/비번을 확인하세요. (DB 파일이 잘 올라갔는지 확인!)")
     st.stop()
 
-# --- [클라우드 파워 추격 엔진] ---
-def run_scan_cloud(skw, spmid, scmid, snote, user_id):
+# ==========================================
+# [로그인 후 대시보드 영역]
+# ==========================================
+
+# --- [기능] 공식 API 추격 ---
+def run_scan_v182(skw, spmid, scmid, snote, user_id):
     t_pmid, t_cmid = str(spmid).strip(), str(scmid).strip()
-    
-    # 클라우드 아이피의 힘을 빌려 정밀 스캔
     url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(skw)}&display=100"
     headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
     
-    with st.spinner("🚀 클라우드 엔진 가동 중..."):
+    with st.spinner(f"🚀 클라우드 엔진이 '{skw}' 추격 중..."):
         try:
             res = requests.get(url, headers=headers, timeout=10)
-            f_rank = 0
-            off_name = skw
+            f_rank, off_name = 0, skw
             if res.status_code == 200:
                 items = res.json().get('items', [])
                 for idx, item in enumerate(items):
@@ -66,15 +77,75 @@ def run_scan_cloud(skw, spmid, scmid, snote, user_id):
                         off_name = re.sub('<[^>]*>', '', item.get('title', ''))
                         break
             
-            # DB 업데이트
             db = get_db()
-            rank_save = f"{f_rank}|0" # 카탈로그 순위는 추후 보강
+            rank_save = f"{f_rank}|0"
+            # 클라우드에서는 이미지와 상세 정보도 추후 보강 예정 (일단 순위 우선)
             save_data = f"||0||{off_name}||{off_name}"
             db.execute("INSERT INTO logs (user_id, date, keyword, p_mid, rank, name, price, mall, reviews, purchase, cat_mid, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (user_id, datetime.now().strftime("%Y-%m-%d %H:%M"), skw, t_pmid, rank_save, save_data, "0", "피크스페이스", "0", "0", t_cmid, str(snote)))
             db.commit(); db.close()
             st.rerun()
         except Exception as e:
-            st.error(f"스캔 중 오류: {e}")
+            st.error(f"스캔 오류: {e}")
 
-# (이하 리스트 출력 UI 코드는 사장님이 쓰시던 것과 동일하게 붙여넣으시면 됩니다!)
+# --- [UI 렌더링] ---
+def get_rank_display(raw_val):
+    if not raw_val or raw_val == "-" or raw_val == "0|0": return "-", ""
+    parts = str(raw_val).split("|")
+    main = parts[0] if parts[0] != "0" else "100위+"
+    return f"{main}위", ""
+
+st.markdown("""<style>
+    .product-box { border: 2px solid #edf2f7; border-radius: 15px; padding: 25px; background: white; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
+    .product-title { font-size: 1.15rem; font-weight: 700; color: #1a202c; line-height: 1.5; }
+</style>""", unsafe_allow_html=True)
+
+st.title(f"🚀 JOA CLOUD SNIPER - {st.session_state.user}님")
+
+# 상단 입력창
+with st.container():
+    c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1.2])
+    nk, np, nc, nn = c1.text_input("키워드"), c2.text_input("P-MID"), c3.text_input("C-MID"), c4.text_input("메모")
+    if c5.button("🚀 순위 추격", use_container_width=True):
+        if nk and np: run_scan_v182(nk, np, nc, nn, st.session_state.user)
+
+st.divider()
+
+# 리스트 출력
+db = get_db()
+items = db.execute("SELECT keyword, p_mid, note, MIN(id) FROM logs WHERE user_id=? GROUP BY keyword, p_mid, note ORDER BY MIN(id) ASC", (st.session_state.user,)).fetchall()
+
+for idx, (kw, mid, m_val, _) in enumerate(items):
+    row = db.execute("SELECT * FROM logs WHERE keyword=? AND p_mid=? AND (note=? OR note IS NULL) AND user_id=? ORDER BY id DESC LIMIT 1", (kw, mid, m_val, st.session_state.user)).fetchone()
+    if not row: continue
+    parts = str(row[6]).split("||")
+    title = parts[2] if len(parts)>2 else kw
+    m_rev, m_buy, cmid, memo_text = str(row[9]), str(row[10]), row[11], row[12]
+
+    with st.container():
+        st.markdown('<div class="product-box">', unsafe_allow_html=True)
+        col1, col2, col3, col4, col5 = st.columns([0.5, 4.2, 5.0, 1.8, 2.8])
+        with col1: st.subheader(idx + 1)
+        with col2:
+            st.markdown(f"### 🔍 {kw}")
+            st.markdown(f"<div class='product-title'>{title}</div>", unsafe_allow_html=True)
+            if memo_text and memo_text != "None": st.markdown(f"<div style='color:#3182ce;'>📝 {memo_text}</div>", unsafe_allow_html=True)
+            st.caption(f"P: {mid} | C: {cmid if cmid else '-'}")
+        with col3:
+            h_html = "<div style='display:flex; gap:5px;'>"
+            for d in range(8):
+                t = (datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d")
+                hist = db.execute("SELECT rank FROM logs WHERE keyword=? AND p_mid=? AND note=? AND date LIKE ? ORDER BY id DESC LIMIT 1", (kw, mid, memo_text, f"{t}%")).fetchone()
+                m_rk, _ = get_rank_display(hist[0] if hist else "-")
+                h_html += f"<div style='flex:1; border:1px solid #e2e8f0; padding:6px; text-align:center; background:#f8f9fa; border-radius:10px;'><div style='font-size:0.65rem; color:#a0aec0;'>{t[5:]}</div><div style='font-size:0.85rem; font-weight:bold;'>{m_rk}</div></div>"
+            st.markdown(h_html + "</div>", unsafe_allow_html=True)
+        with col4:
+            st.markdown(f"<div style='margin-top:10px;'>구매 <b>{m_buy}</b><br>리뷰 <b>{m_rev}</b></div>", unsafe_allow_html=True)
+        with col6:
+            m_rk, _ = get_rank_display(row[5])
+            st.markdown(f"<div style='text-align:center;'><h1 style='font-size:3rem; margin:0;'>{m_rk}</h1></div>", unsafe_allow_html=True)
+            bc = st.columns(2)
+            if bc[0].button("🔄", key=f"r_{row[0]}"): run_scan_v172(kw, mid, cmid, memo_text, st.session_state.user)
+            if bc[1].button("🗑️", key=f"d_{row[0]}"): db.execute("DELETE FROM logs WHERE keyword=? AND p_mid=? AND note=? AND user_id=?", (kw, mid, memo_text, st.session_state.user)); st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+db.close()
