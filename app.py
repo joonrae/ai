@@ -14,7 +14,7 @@ NAVER_CLIENT_SECRET = "DzhNvk3yi3"
 RAPID_KEY = "3846404552mshd40a37048efd7cep108802jsn513f62eb92a3"
 RAPID_HOST = "naver-shopping-insights-api-unofficial.p.rapidapi.com"
 
-st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V188")
+st.set_page_config(layout="wide", page_title="JOA CLOUD SNIPER V190")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
@@ -24,67 +24,72 @@ def get_db():
     conn.commit()
     return conn
 
-# --- [데이터 정밀 수색 엔진] ---
-def get_naver_official(keyword, pmid, cmid):
-    url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(keyword)}&display=100"
-    headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
-    try:
-        res = requests.get(url, headers=headers, timeout=10)
-        if res.status_code == 200:
-            items = res.json().get('items', [])
-            for idx, item in enumerate(items):
-                if str(item.get('productId')) in [str(pmid), str(cmid)]:
-                    return idx + 1, re.sub('<[^>]*>', '', item.get('title', '')), item.get('image', '')
-    except: pass
-    return 0, "", ""
-
-def get_catalog_rapid(cmid, pmid):
-    if not cmid or str(cmid).lower() == 'none' or not cmid.isdigit(): return None
-    url = f"https://{RAPID_HOST}/v1/naver/products?url={quote(f'https://msearch.shopping.naver.com/catalog/{cmid}')}"
-    headers = {"X-RapidAPI-Key": RAPID_KEY, "X-RapidAPI-Host": RAPID_HOST}
-    try:
-        res = requests.get(url, headers=headers, timeout=20)
-        if res.status_code == 200:
-            data = res.json()
-            malls = data.get('malls', []) + data.get('lowPriceHighValueMalls', [])
-            for idx, m in enumerate(malls):
-                if str(m.get('nvMid')) == str(pmid) or str(m.get('productId')) == str(pmid):
-                    return {"inner": m.get('rank') or (idx + 1), "name": m.get('productName', ''), "img": m.get('imageUrl', ''), "rev": m.get('reviewCount', 0), "pur": m.get('purchaseCnt', 0)}
-    except: pass
-    return None
-
-def run_scan_v188(skw, spmid, scmid, snote, user_id):
+# --- [자동 지능형 추격 엔진] ---
+def run_auto_scan_v190(skw, spmid, scmid, snote, user_id):
     t_pmid, t_cmid = str(spmid).strip(), str(scmid).strip()
     db = get_db()
     
-    # 1. 기존 금고 데이터 확보
+    # 1. 기존 금고 데이터 및 로그에서 가장 좋았던 시절의 데이터 찾기
     meta = db.execute("SELECT name, img, reviews, purchase FROM product_meta WHERE p_mid=?", (t_pmid,)).fetchone()
-    m_name, m_img, m_rev, m_pur = (meta[0], meta[1], meta[2], meta[3]) if meta else ("", "", "0", "0")
+    # 로그 전체를 뒤져서 가장 긴 이름을 찾음 (사장님이 수동으로 고칠 필요 없게!)
+    log_best_name = db.execute("SELECT name FROM logs WHERE p_mid=? ORDER BY length(name) DESC LIMIT 1", (t_pmid,)).fetchone()
+    
+    m_name = (log_best_name[0].split("||")[2] if log_best_name and "||" in log_best_name[0] else meta[0]) if meta else skw
+    m_img = meta[1] if meta else ""
+    m_rev = meta[2] if meta else "0"
+    m_pur = meta[3] if meta else "0"
 
-    with st.spinner(f"🛡️ '{skw}' 데이터 철통 보호 중..."):
-        f_rank, off_name, off_img = get_naver_official(skw, t_pmid, t_cmid)
-        spy = get_catalog_rapid(t_cmid, t_pmid)
+    with st.spinner(f"🤖 '{skw}' 지능형 자동 추격 중..."):
+        # 공식 API 스캔 (순위 확인용)
+        url = f"https://openapi.naver.com/v1/search/shop.json?query={quote(skw)}&display=100"
+        headers = {"X-Naver-Client-Id": NAVER_CLIENT_ID, "X-Naver-Client-Secret": NAVER_CLIENT_SECRET}
+        f_rank, off_name, off_img = 0, skw, ""
+        try:
+            res = requests.get(url, headers=headers, timeout=10)
+            if res.status_code == 200:
+                items = res.json().get('items', [])
+                for idx, item in enumerate(items):
+                    if str(item.get('productId')) in [t_pmid, t_cmid]:
+                        f_rank = idx + 1
+                        off_name = re.sub('<[^>]*>', '', item.get('title', ''))
+                        off_img = item.get('image', '')
+                        break
+        except: pass
 
-    # 2. [지능형 이름 조합]
-    # 금고이름, 스파이이름, (키워드+공식이름) 중 가장 긴 것 선택
-    auto_combined_name = f"{skw} {off_name}".strip()
-    candidates = [off_name, m_name, auto_combined_name]
+        # RapidAPI 정찰 (상세 정보 확인용)
+        r_url = f"https://{RAPID_HOST}/v1/naver/products?url={quote(f'https://msearch.shopping.naver.com/catalog/{t_cmid}')}"
+        r_headers = {"X-RapidAPI-Key": RAPID_KEY, "X-RapidAPI-Host": RAPID_HOST}
+        spy = None
+        try:
+            r_res = requests.get(r_url, headers=r_headers, timeout=15)
+            if r_res.status_code == 200:
+                data = r_res.json()
+                malls = data.get('malls', []) + data.get('lowPriceHighValueMalls', [])
+                for idx, m in enumerate(malls):
+                    if str(m.get('nvMid') or m.get('productId')) == t_pmid:
+                        spy = {"inner": m.get('rank') or (idx + 1), "name": m.get('productName', ''), "img": m.get('imageUrl', ''), "rev": m.get('reviewCount', 0), "pur": m.get('purchaseCnt', 0)}
+                        break
+        except: pass
+
+    # --- [지능형 데이터 판단 (핵심!)] ---
+    # 이름: (금고이름, 정찰이름, 공식이름) 중 무조건 가장 긴 녀석 선택
+    candidates = [m_name, off_name]
     if spy: candidates.append(spy['name'])
     final_name = max([c for c in candidates if c], key=len)
 
-    # 3. [이미지 및 수치 결정]
+    # 이미지: 한 번이라도 확보했으면 유지
     final_img = m_img if (m_img and m_img.startswith("http")) else (spy['img'] if spy and spy['img'] else off_img)
-    
+
+    # 수치: 0이면 차단으로 간주하고 기존 데이터 유지
     if spy and int(spy['pur']) > 0:
         final_pur, final_rev, final_inner = str(spy['pur']), str(spy['rev']), spy['inner']
     else:
-        # 스캔 실패 시 금고 데이터 유지 (0으로 안 만듦)
         final_pur, final_rev, final_inner = m_pur, m_rev, 0
 
     # 금고 업데이트
     db.execute("INSERT OR REPLACE INTO product_meta VALUES (?,?,?,?,?)", (t_pmid, final_name, final_img, final_rev, final_pur))
     
-    # 로그 기록
+    # 로그 저장
     rank_save = f"{f_rank}|{final_inner}"
     save_data = f"{final_img}||0||{final_name}||{final_name}"
     db.execute("INSERT INTO logs (user_id, date, keyword, p_mid, rank, name, price, mall, reviews, purchase, cat_mid, note) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -93,26 +98,18 @@ def run_scan_v188(skw, spmid, scmid, snote, user_id):
     st.rerun()
 
 # --- [UI 렌더링 영역] ---
-def get_rank_display(raw_val):
-    if not raw_val or raw_val == "-" or raw_val == "0|0": return "-", ""
-    parts = str(raw_val).split("|")
-    main = parts[0] if parts[0] != "0" else "100위+"
-    inner = parts[1] if (len(parts) > 1 and parts[1] != "0") else ""
-    sub_html = f"<div style='color:#22c55e; font-weight:bold; font-size:1.1rem;'>묶음 {inner}위</div>" if inner else ""
-    return f"{main}위", sub_html
-
 st.markdown("""<style>
     .product-box { border: 2px solid #edf2f7; border-radius: 15px; padding: 25px; background: white; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.02); }
-    .product-title { font-size: 1.1rem; font-weight: 700; color: #1a202c; line-height: 1.4; margin-bottom: 10px; }
+    .product-title { font-size: 1.15rem; font-weight: 700; color: #1a202c; line-height: 1.4; margin-bottom: 8px; }
 </style>""", unsafe_allow_html=True)
 
-st.title(f"🚀 JOA CLOUD SNIPER V188")
+st.title("🚀 JOA CLOUD SNIPER V190 (완전 자동화)")
 
 with st.container():
     c1, c2, c3, c4, c5 = st.columns([2, 2, 2, 2, 1.2])
     nk, np, nc, nn = c1.text_input("키워드"), c2.text_input("P-MID"), c3.text_input("C-MID"), c4.text_input("메모")
     if c5.button("🚀 추격 시작", use_container_width=True):
-        if nk and np: run_scan_v188(nk, np, nc, nn, "사장님")
+        if nk and np: run_auto_scan_v190(nk, np, nc, nn, "사장님")
 
 st.divider()
 
@@ -120,37 +117,39 @@ db = get_db()
 items = db.execute("SELECT keyword, p_mid, note, MIN(id) FROM logs GROUP BY keyword, p_mid, note ORDER BY MIN(id) ASC").fetchall()
 
 for idx, (kw, mid, m_val, _) in enumerate(items):
-    row = db.execute("SELECT * FROM logs WHERE keyword=? AND p_mid=? AND (note=? OR note IS NULL) ORDER BY id DESC LIMIT 1", (kw, mid, m_val)).fetchone()
-    if not row: continue
-    parts = str(row[6]).split("||")
-    img, title = (parts[0] if len(parts)>0 else ""), (parts[2] if len(parts)>2 else kw)
-    m_rev, m_buy, cmid, memo_text = str(row[9]), str(row[10]), row[11], row[12]
+    meta = db.execute("SELECT name, img, reviews, purchase FROM product_meta WHERE p_mid=?", (mid,)).fetchone()
+    row = db.execute("SELECT * FROM logs WHERE keyword=? AND p_mid=? ORDER BY id DESC LIMIT 1", (kw, mid)).fetchone()
+    
+    if not row or not meta: continue
+    
+    m_name, m_img, m_rev, m_pur = meta
+    m_rk, _ = str(row[5]).split("|") if "|" in str(row[5]) else (row[5], "0")
 
     with st.container():
         st.markdown('<div class="product-box">', unsafe_allow_html=True)
         col1, col2, col3, col4, col5, col6 = st.columns([0.5, 1.8, 4.2, 5.0, 1.8, 2.8])
         with col1: st.subheader(idx + 1)
         with col2:
-            if img.startswith("http"): st.image(img, width=140)
-            else: st.info("🖼️ 이미지 사수 중")
+            if m_img.startswith("http"): st.image(m_img, width=140)
+            else: st.info("🖼️ 사수 중")
         with col3:
             st.markdown(f"### 🔍 {kw}")
-            st.markdown(f"<div class='product-title'>{title}</div>", unsafe_allow_html=True)
-            if memo_text and memo_text != "None": st.caption(f"📝 {memo_text}")
-            st.caption(f"P: {mid} | C: {cmid}")
+            st.markdown(f"<div class='product-title'>{m_name}</div>", unsafe_allow_html=True)
+            if m_val and m_val != "None": st.caption(f"📝 {m_val}")
+            st.caption(f"P: {mid} | C: {row[11]}")
         with col4:
             h_html = "<div style='display:flex; gap:3px;'>"
             for d in range(8):
                 t = (datetime.now() - timedelta(days=d)).strftime("%Y-%m-%d")
-                hist = db.execute("SELECT rank FROM logs WHERE keyword=? AND p_mid=? AND date LIKE ?", (kw, mid, f"{t}%")).fetchone()
-                m_rk, _ = get_rank_display(hist[0] if hist else "-")
-                h_html += f"<div style='flex:1; border:1px solid #e2e8f0; padding:5px; text-align:center; background:#f8f9fa; border-radius:8px;'><div style='font-size:0.6rem; color:#a0aec0;'>{t[5:]}</div><div style='font-size:0.8rem; font-weight:bold;'>{m_rk}</div></div>"
+                h_rank = db.execute("SELECT rank FROM logs WHERE keyword=? AND p_mid=? AND date LIKE ?", (kw, mid, f"{t}%")).fetchone()
+                rk = str(h_rank[0]).split("|")[0] if h_rank and "|" in str(h_rank[0]) else "-"
+                h_html += f"<div style='flex:1; border:1px solid #e2e8f0; padding:5px; text-align:center; background:#f8f9fa; border-radius:8px;'><div style='font-size:0.6rem; color:#a0aec0;'>{t[5:]}</div><div style='font-size:0.8rem; font-weight:bold;'>{rk if rk != '0' else '100+'}위</div></div>"
             st.markdown(h_html + "</div>", unsafe_allow_html=True)
         with col5:
-            st.markdown(f"<div style='margin-top:10px;'>구매 <b>{m_buy}</b><br>리뷰 <b>{m_rev}</b></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:10px;'>구매 <b>{m_pur}</b><br>리뷰 <b>{m_rev}</b></div>", unsafe_allow_html=True)
         with col6:
-            m_rk, s_rk = get_rank_display(row[5])
-            st.markdown(f"<div style='text-align:center;'><h1 style='font-size:3rem; margin:0;'>{m_rk}</h1>{s_rk}</div>", unsafe_allow_html=True)
-            if st.button("🔄", key=f"r_{row[0]}"): run_scan_v188(kw, mid, cmid, memo_text, "사장님")
+            st.markdown(f"<div style='text-align:center;'><h1 style='font-size:3.5rem; margin:0;'>{m_rk if m_rk != '0' else '100+'}위</h1></div>", unsafe_allow_html=True)
+            if st.button("🔄 즉시 업데이트", key=f"btn_{mid}"):
+                run_auto_scan_v190(kw, mid, row[11], m_val, "사장님")
         st.markdown('</div>', unsafe_allow_html=True)
 db.close()
